@@ -8,12 +8,17 @@ export type ResumeFile = {
   sizeBytes: number;
 };
 
+export type PageError = {
+  code: string;
+  message: string;
+};
+
 export type PageState = {
   jd: string;
   resumeFile: ResumeFile | null;
   status: Status;
   result: CustomizedResume | null;
-  error: string | null;
+  error: PageError | null;
 };
 
 export type Action =
@@ -22,7 +27,7 @@ export type Action =
   | { type: "clear_resume" }
   | { type: "customize_start" }
   | { type: "customize_success"; payload: CustomizedResume }
-  | { type: "customize_error"; message: string }
+  | { type: "customize_error"; error: PageError }
   | { type: "reset" };
 
 export const initialState: PageState = {
@@ -46,7 +51,7 @@ export function pageReducer(state: PageState, action: Action): PageState {
     case "customize_success":
       return { ...state, status: "success", result: action.payload, error: null };
     case "customize_error":
-      return { ...state, status: "error", error: action.message };
+      return { ...state, status: "error", error: action.error };
     case "reset":
       return initialState;
   }

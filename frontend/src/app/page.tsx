@@ -3,6 +3,7 @@
 import { useReducer } from "react";
 
 import { CustomizeButton } from "@/components/CustomizeButton";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { JDInput } from "@/components/JDInput";
 import { ResultPanel } from "@/components/ResultPanel";
 import { ResumeUpload } from "@/components/ResumeUpload";
@@ -38,11 +39,11 @@ export default function Home() {
       const result = await customizeResume(state.jd, state.resumeFile.file);
       dispatch({ type: "customize_success", payload: result });
     } catch (err) {
-      const message =
+      const error =
         err instanceof ApiError
-          ? err.message
-          : "Something went wrong. Please try again.";
-      dispatch({ type: "customize_error", message });
+          ? { code: err.code, message: err.message }
+          : { code: "UNKNOWN_ERROR", message: "Something went wrong." };
+      dispatch({ type: "customize_error", error });
     }
   };
 
@@ -78,12 +79,7 @@ export default function Home() {
       </div>
 
       {state.status === "error" && state.error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
-        >
-          {state.error}
-        </div>
+        <ErrorBanner code={state.error.code} onRetry={handleCustomize} />
       )}
 
       {state.status === "success" && state.result && (
