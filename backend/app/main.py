@@ -15,6 +15,7 @@ from app.errors import (
 )
 from app.schemas import CustomizedResume
 from app.services.auth import extract_bearer_token, verify_id_token
+from app.services.history import save_customization
 from app.services.llm_service import customize_resume
 from app.services.pdf_parser import parse_pdf
 
@@ -91,6 +92,7 @@ async def customize(
     status_code = 200
     error_code: str | None = None
     user_id: str | None = None
+    history_write_error: str | None = None
     resume_bytes = b""
     try:
         # Phase 2: if a Bearer token is present, verify it and attach uid
@@ -109,12 +111,28 @@ async def customize(
         _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
 
         resume_text = parse_pdf(resume_bytes)
-        return customize_resume(
+        result = customize_resume(
             jd,
             resume_text,
             api_key=settings.gemini_api_key,
             model=settings.gemini_model,
         )
+
+        # AR — authenticated runs are persisted to Firestore; anonymous
+        # runs are deliberately NOT stored. A storage failure must not
+        # break the user-facing 200, so we swallow and log it.
+        if user_id is not None:
+            try:
+                save_customization(
+                    user_id=user_id,
+                    jd_text=jd,
+                    parsed_resume_text=resume_text,
+                    customized_resume=result,
+                )
+            except Exception:
+                history_write_error = "HISTORY_WRITE_FAILED"
+
+        return result
     except AppError as exc:
         status_code = exc.status_code
         error_code = exc.code.value
@@ -135,4 +153,6 @@ async def customize(
         }
         if error_code is not None:
             entry["error_code"] = error_code
+        if history_write_error is not None:
+            entry["history_write_error"] = history_write_error
         print(json.dumps(entry), flush=True)
