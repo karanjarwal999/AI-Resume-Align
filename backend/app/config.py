@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     firebase_admin_credentials_path: str = "firebase-admin.json"
+    mongo_uri: str = ""
+    mongo_db_name: str = "airesumealign"
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
