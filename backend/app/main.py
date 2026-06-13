@@ -40,6 +40,23 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(
+    _request: Request, _exc: Exception
+) -> JSONResponse:
+    # NFR2 -- never include stack traces or internal details in the
+    # response body. The original exception is logged elsewhere if needed.
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Something went wrong on our end. Please try again.",
+            }
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
