@@ -1,5 +1,7 @@
+from typing import Annotated
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -10,7 +12,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    # NoDecode disables pydantic-settings' default JSON-decode pass for
+    # complex types, so the validator below sees the raw env value and can
+    # split on commas instead.
+    allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
