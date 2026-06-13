@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    firebase_admin_credentials_path: str = "firebase-admin.json"
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
