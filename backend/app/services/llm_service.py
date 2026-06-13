@@ -62,8 +62,27 @@ class _ValidationFailure:
     reason: str
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
 def _proper_noun_phrases(text: str) -> set[str]:
-    return {m.group(0).lower() for m in _PROPER_NOUN_PATTERN.finditer(text)}
+    """Extract Title-Case 2+ word phrases from `text`, ignoring matches
+    that span a sentence-initial word. Without this, bullets like
+    "Designed Postgres schemas..." get flagged as introducing the
+    proper-noun phrase "Designed Postgres" -- but "Designed" is just a
+    sentence-leading verb, not part of an employer or project name.
+    """
+    out: set[str] = set()
+    for sentence in _SENTENCE_SPLIT.split(text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        # Decapitalize the first letter so the leading verb/adjective
+        # is excluded from proper-noun matching.
+        munged = sentence[0].lower() + sentence[1:]
+        for match in _PROPER_NOUN_PATTERN.finditer(munged):
+            out.add(match.group(0).lower())
+    return out
 
 
 def _check_suggested_additions_in_jd(result: CustomizedResume, jd: str) -> str | None:
@@ -151,6 +170,136 @@ def _generate(
         ),
     )
     return response.text or ""
+
+
+def _stream(
+    client: genai.Client,
+    model: str,
+    jd: str,
+    resume_text: str,
+):
+    """Default streaming generator. Tests inject a fake to avoid the
+    network call."""
+    user_payload = (
+        f"JOB DESCRIPTION:\n{jd}\n\n"
+        f"ORIGINAL RESUME TEXT:\n{resume_text}"
+    )
+    return client.models.generate_content_stream(
+        model=model,
+        contents=user_payload,
+        config=types.GenerateContentConfig(
+            system_instruction=_SYSTEM_INSTRUCTION,
+            response_mime_type="application/json",
+            response_schema=CustomizedResume,
+            temperature=0.3,
+        ),
+    )
+
+
+_STREAM_FIELDS = ("summary", "skills", "experience", "suggested_additions")
+
+
+class _FieldStreamer:
+    """Accumulates streamed JSON text and yields one {field: value} dict
+    per known top-level field as soon as that field's value parses.
+
+    Uses json.JSONDecoder.raw_decode to detect when a value is complete:
+    if raw_decode succeeds on the next-value position, we have the full
+    string / list / number, no matter how Gemini chunked it.
+    """
+
+    def __init__(self) -> None:
+        self.buffer = ""
+        self._emitted: set[str] = set()
+        self._decoder = json.JSONDecoder()
+
+    def feed(self, chunk: str):
+        if not chunk:
+            return
+        self.buffer += chunk
+        for field in _STREAM_FIELDS:
+            if field in self._emitted:
+                continue
+            value = self._try_field(field)
+            if value is not None:
+                self._emitted.add(field)
+                yield {field: value[0]}
+
+    def _try_field(self, field: str):
+        key_marker = f'"{field}"'
+        key_idx = self.buffer.find(key_marker)
+        if key_idx == -1:
+            return None
+        colon = self.buffer.find(":", key_idx + len(key_marker))
+        if colon == -1:
+            return None
+        pos = colon + 1
+        while pos < len(self.buffer) and self.buffer[pos].isspace():
+            pos += 1
+        if pos >= len(self.buffer):
+            return None
+        try:
+            value, _ = self._decoder.raw_decode(self.buffer, pos)
+        except json.JSONDecodeError:
+            return None
+        return (value,)
+
+
+def customize_resume_stream(
+    jd: str,
+    resume_text: str,
+    *,
+    api_key: str,
+    model: str,
+    _client_factory=_build_client,
+    _stream_generator=_stream,
+):
+    """Streaming counterpart to customize_resume.
+
+    Yields NDJSON-shaped dicts as Gemini's response unfolds:
+
+      {"summary": "..."}
+      {"skills": [...]}
+      {"experience": [...]}
+      {"suggested_additions": [...]}
+      {"complete": true, "result": {...}}   # success terminator (full validated result)
+      OR
+      {"error": {"code": "...", "message": "..."}}  # failure terminator
+
+    Callers stream the per-field dicts to the client and use the
+    "complete" terminator's `result` field for history persistence.
+    """
+    try:
+        client = _client_factory(api_key)
+    except LLMUnavailableError as exc:
+        yield {"error": {"code": exc.code.value, "message": exc.message}}
+        return
+
+    streamer = _FieldStreamer()
+    try:
+        for chunk in _stream_generator(client, model, jd, resume_text):
+            text = getattr(chunk, "text", None) or ""
+            for emitted in streamer.feed(text):
+                yield emitted
+    except Exception:
+        yield {
+            "error": {
+                "code": "LLM_UNAVAILABLE",
+                "message": "The customize service is temporarily unavailable. Please try again.",
+            }
+        }
+        return
+
+    outcome = _validate_response(streamer.buffer, jd, resume_text)
+    if isinstance(outcome, CustomizedResume):
+        yield {"complete": True, "result": outcome.model_dump()}
+    else:
+        yield {
+            "error": {
+                "code": "LLM_INVALID_RESPONSE",
+                "message": "The customize service returned an unusable response. Please try again.",
+            }
+        }
 
 
 def customize_resume(
