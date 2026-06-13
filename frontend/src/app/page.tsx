@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 
 import { AuthHeader } from "@/components/AuthHeader";
 import { CustomizeButton } from "@/components/CustomizeButton";
@@ -8,19 +8,31 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { JDInput } from "@/components/JDInput";
 import { ResultPanel } from "@/components/ResultPanel";
 import { ResumeUpload } from "@/components/ResumeUpload";
-import { ApiError, customizeResume, customizeResumeStream } from "@/lib/api";
-import { MIN_JD_CHARS } from "@/lib/constants";
+import { SavedResumeChip } from "@/components/SavedResumeChip";
+import {
+  ApiError,
+  customizeResume,
+  customizeResumeStream,
+  fetchSavedResume,
+  replaceSavedResume,
+} from "@/lib/api";
+import { MAX_JD_CHARS, MIN_JD_CHARS } from "@/lib/constants";
 import { initialState, pageReducer } from "@/lib/reducer";
 import type { CustomizedResume } from "@/lib/types";
 import { useAuth } from "@/lib/useAuth";
 
 function disabledReason(jd: string, hasResume: boolean): string | undefined {
-  const jdShort = jd.trim().length < MIN_JD_CHARS;
+  const trimmedLen = jd.trim().length;
+  const jdShort = trimmedLen < MIN_JD_CHARS;
+  const jdLong = trimmedLen > MAX_JD_CHARS;
   if (jdShort && !hasResume) {
     return `Paste a job description (at least ${MIN_JD_CHARS} characters) and upload your PDF resume.`;
   }
   if (jdShort) {
     return `Job description must be at least ${MIN_JD_CHARS} characters.`;
+  }
+  if (jdLong) {
+    return `Job description must be ${MAX_JD_CHARS.toLocaleString()} characters or fewer.`;
   }
   if (!hasResume) {
     return "Upload your PDF resume.";
@@ -30,22 +42,65 @@ function disabledReason(jd: string, hasResume: boolean): string | undefined {
 
 export default function Home() {
   const [state, dispatch] = useReducer(pageReducer, initialState);
-  const { user } = useAuth();
+  const { user, ready } = useAuth();
   // Off by default per AR — keep the proven non-streaming path until
   // streaming has been verified in production.
   const [useStreaming, setUseStreaming] = useState(false);
 
-  const reason = disabledReason(state.jd, state.resumeFile !== null);
+  // On auth-ready, fetch the user's saved resume (if any). A 404 means
+  // "no saved resume yet" — we silently fall back to the upload flow.
+  useEffect(() => {
+    if (!ready || !user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const meta = await fetchSavedResume(idToken);
+        if (!cancelled) dispatch({ type: "set_saved_resume", meta });
+      } catch (err) {
+        // 404 NO_SAVED_RESUME is the expected first-time case. Anything
+        // else we silently ignore here so it doesn't block the page —
+        // the user can still upload fresh.
+        if (
+          err instanceof ApiError &&
+          err.code !== "NO_SAVED_RESUME" &&
+          err.code !== "NETWORK_ERROR"
+        ) {
+          console.warn("fetchSavedResume failed:", err.code, err.message);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, user]);
+
+  // A fresh manual upload takes precedence over the saved resume for
+  // *this* customize call. Otherwise, the saved resume counts as
+  // "have resume" for the gate.
+  const usingSaved = state.savedResume !== null && state.resumeFile === null;
+  const hasResume = state.resumeFile !== null || state.savedResume !== null;
+  const reason = disabledReason(state.jd, hasResume);
   const isDisabled = reason !== undefined;
   const isLoading = state.status === "customizing";
 
+  const handleReplace = async (file: File) => {
+    if (!user) return;
+    const idToken = await user.getIdToken();
+    const meta = await replaceSavedResume(file, idToken);
+    dispatch({ type: "set_saved_resume", meta });
+    // Drop any one-off fresh upload so the new saved version is what
+    // the next customize call uses.
+    dispatch({ type: "clear_resume" });
+  };
+
   const runNonStreaming = async (idToken: string | undefined) => {
-    if (!state.resumeFile) return;
     try {
       const result = await customizeResume(
         state.jd,
-        state.resumeFile.file,
+        state.resumeFile?.file ?? null,
         idToken,
+        usingSaved,
       );
       dispatch({ type: "customize_success", payload: result });
     } catch (err) {
@@ -58,11 +113,10 @@ export default function Home() {
   };
 
   const runStreaming = async (idToken: string | undefined) => {
-    if (!state.resumeFile) return;
     let assembled: Partial<CustomizedResume> = {};
     await customizeResumeStream(
       state.jd,
-      state.resumeFile.file,
+      state.resumeFile?.file ?? null,
       idToken,
       {
         onPartial: (partial) => {
@@ -82,11 +136,12 @@ export default function Home() {
           });
         },
       },
+      usingSaved,
     );
   };
 
   const handleCustomize = async () => {
-    if (!state.resumeFile) return;
+    if (!state.resumeFile && !state.savedResume) return;
     dispatch({ type: "customize_start" });
     const idToken = user ? await user.getIdToken() : undefined;
     if (useStreaming) {
@@ -115,6 +170,13 @@ export default function Home() {
         value={state.jd}
         onChange={(value) => dispatch({ type: "set_jd", value })}
       />
+
+      {state.savedResume && (
+        <SavedResumeChip
+          meta={state.savedResume}
+          onReplace={handleReplace}
+        />
+      )}
 
       <ResumeUpload
         value={state.resumeFile}

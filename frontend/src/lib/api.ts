@@ -3,6 +3,7 @@ import type {
   CustomizedResume,
   HistoryDetail,
   HistoryListItem,
+  SavedResumeMeta,
 } from "./types";
 
 const API_BASE_URL =
@@ -30,12 +31,17 @@ function isApiErrorPayload(value: unknown): value is ApiErrorPayload {
 
 export async function customizeResume(
   jd: string,
-  resume: File,
+  resume: File | null,
   idToken?: string,
+  useSaved = false,
 ): Promise<CustomizedResume> {
   const body = new FormData();
   body.append("jd", jd);
-  body.append("resume", resume);
+  if (useSaved) {
+    body.append("use_saved", "true");
+  } else if (resume) {
+    body.append("resume", resume);
+  }
 
   const headers: HeadersInit = {};
   if (idToken) {
@@ -130,6 +136,52 @@ export function fetchHistoryDetail(
   return authedGet<HistoryDetail>(`/api/history/${id}`, idToken);
 }
 
+export function fetchSavedResume(idToken: string): Promise<SavedResumeMeta> {
+  return authedGet<SavedResumeMeta>("/api/resume", idToken);
+}
+
+export async function replaceSavedResume(
+  resume: File,
+  idToken: string,
+): Promise<SavedResumeMeta> {
+  const body = new FormData();
+  body.append("resume", resume);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/resume`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${idToken}` },
+      body,
+    });
+  } catch {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
+
+  if (response.ok) {
+    return (await response.json()) as SavedResumeMeta;
+  }
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // not JSON
+  }
+  if (isApiErrorPayload(payload)) {
+    throw new ApiError(payload.error.code, payload.error.message, response.status);
+  }
+  throw new ApiError(
+    "UNKNOWN_ERROR",
+    `Server returned ${response.status}.`,
+    response.status,
+  );
+}
+
 export type StreamCallbacks = {
   onPartial: (partial: Partial<CustomizedResume>) => void;
   onComplete: () => void;
@@ -138,13 +190,18 @@ export type StreamCallbacks = {
 
 export async function customizeResumeStream(
   jd: string,
-  resume: File,
+  resume: File | null,
   idToken: string | undefined,
   callbacks: StreamCallbacks,
+  useSaved = false,
 ): Promise<void> {
   const body = new FormData();
   body.append("jd", jd);
-  body.append("resume", resume);
+  if (useSaved) {
+    body.append("use_saved", "true");
+  } else if (resume) {
+    body.append("resume", resume);
+  }
 
   const headers: HeadersInit = {};
   if (idToken) headers["Authorization"] = `Bearer ${idToken}`;

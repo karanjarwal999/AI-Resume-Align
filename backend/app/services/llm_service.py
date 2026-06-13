@@ -27,6 +27,8 @@ Produce a JSON object that tailors the resume to that JD. Output JSON only -- \
 no markdown fences, no prose around it.
 
 Required fields:
+- name: the candidate's full name, exactly as it appears in the original \
+resume (typically at the top). Copy it verbatim -- do not invent or paraphrase.
 - summary: 200-600 char tailored summary that highlights overlap with the JD.
 - skills: 5-20 short strings (each <=60 chars) drawn from the original resume \
 that match the JD.
@@ -34,6 +36,9 @@ that match the JD.
 already appear in the original resume to emphasize JD-relevant aspects. \
 NEVER invent companies, job titles, dates, or experiences that are not \
 already in the original resume.
+- education: 1-10 entries (each <=200 chars) drawn from the original resume's \
+education section. Keep each entry close to the resume's original text \
+(school name, degree, year). NEVER invent schools, programs, or dates.
 - suggested_additions: 0-10 short strings (each <=60 chars) listing skills \
 or qualifications named in the JD that the candidate does NOT currently \
 show. Each entry MUST be a phrase that literally appears in the JD.
@@ -42,9 +47,12 @@ Strict rules:
 1. Do not fabricate employer names, project names, or titles in 'experience'. \
    Every proper noun in an experience bullet must already appear somewhere in \
    the original resume.
-2. Every suggested_additions item must appear verbatim (case-insensitive) in \
+2. Do not fabricate schools, universities, or programs in 'education'. Every \
+   proper noun in an education entry must already appear in the original resume.
+3. The 'name' field must appear (case-insensitive) in the original resume.
+4. Every suggested_additions item must appear verbatim (case-insensitive) in \
    the JD text.
-3. Output a single JSON object only, no commentary.
+5. Output a single JSON object only, no commentary.
 """
 
 # Captures Title-Case 2+ word phrases like "Acme Inc", "Microsoft Research",
@@ -63,6 +71,11 @@ class _ValidationFailure:
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalize(text: str) -> str:
+    return _WHITESPACE.sub(" ", text.lower()).strip()
 
 
 def _proper_noun_phrases(text: str) -> set[str]:
@@ -107,6 +120,17 @@ def _check_no_fabricated_employers(
     return None
 
 
+def _check_name_in_resume(
+    result: CustomizedResume, original_resume: str
+) -> str | None:
+    name_norm = _normalize(result.name)
+    if not name_norm:
+        return "name was empty"
+    if name_norm not in _normalize(original_resume):
+        return f"name not found in original resume: {result.name!r}"
+    return None
+
+
 def _validate_response(
     raw_json: str, jd: str, original_resume: str
 ) -> CustomizedResume | _ValidationFailure:
@@ -114,20 +138,45 @@ def _validate_response(
     try:
         payload = json.loads(raw_json)
     except json.JSONDecodeError as exc:
-        return _ValidationFailure(f"response was not valid JSON: {exc}")
+        failure = _ValidationFailure(f"response was not valid JSON: {exc}")
+        _log_validation_failure(failure.reason)
+        return failure
 
     try:
         result = CustomizedResume.model_validate(payload)
     except ValidationError as exc:
-        return _ValidationFailure(f"response violated schema: {exc.errors()[:3]}")
+        failure = _ValidationFailure(
+            f"response violated schema: {exc.errors()[:3]}"
+        )
+        _log_validation_failure(failure.reason)
+        return failure
 
+    # The education entries are kept honest by the system prompt
+    # ("draw from original resume, never invent schools"). A second
+    # proper-noun post-check was too strict in practice: faithful
+    # acronym rephrases like resume="MIT" -> LLM="Massachusetts
+    # Institute of Technology" got rejected because the rephrased
+    # tokens don't appear in the lowercased original resume. We
+    # accept the prompt as sufficient guardrail here.
     for check in (
-        _check_suggested_additions_in_jd(result, jd),
+        _check_name_in_resume(result, original_resume),
         _check_no_fabricated_employers(result, original_resume),
+        _check_suggested_additions_in_jd(result, jd),
     ):
         if check is not None:
+            _log_validation_failure(check)
             return _ValidationFailure(check)
     return result
+
+
+def _log_validation_failure(reason: str) -> None:
+    """Surface the post-check reason to the backend log so failures are
+    diagnosable. The user-facing error stays generic for security; the
+    detail goes only to server logs."""
+    print(
+        json.dumps({"event": "llm_validation_failure", "reason": reason}),
+        flush=True,
+    )
 
 
 def _build_client(api_key: str) -> genai.Client:
@@ -196,7 +245,14 @@ def _stream(
     )
 
 
-_STREAM_FIELDS = ("summary", "skills", "experience", "suggested_additions")
+_STREAM_FIELDS = (
+    "name",
+    "summary",
+    "skills",
+    "experience",
+    "education",
+    "suggested_additions",
+)
 
 
 class _FieldStreamer:
@@ -226,14 +282,16 @@ class _FieldStreamer:
                 yield {field: value[0]}
 
     def _try_field(self, field: str):
-        key_marker = f'"{field}"'
-        key_idx = self.buffer.find(key_marker)
-        if key_idx == -1:
+        # Anchor to a JSON key position: the key must be preceded by
+        # `{` or `,` (with optional whitespace) so we don't false-match
+        # the literal substring inside another field's value -- e.g. a
+        # summary that contains the word "name" would otherwise hijack
+        # the `name` field.
+        pattern = re.compile(r'[{,]\s*"' + re.escape(field) + r'"\s*:')
+        match = pattern.search(self.buffer)
+        if match is None:
             return None
-        colon = self.buffer.find(":", key_idx + len(key_marker))
-        if colon == -1:
-            return None
-        pos = colon + 1
+        pos = match.end()
         while pos < len(self.buffer) and self.buffer[pos].isspace():
             pos += 1
         if pos >= len(self.buffer):

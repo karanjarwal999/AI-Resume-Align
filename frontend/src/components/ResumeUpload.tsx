@@ -90,7 +90,7 @@ export function ResumeUpload({ value, onFile, onClear }: Props) {
             type="button"
             onClick={clear}
             aria-label="Remove resume"
-            className="rounded-full p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            className="cursor-pointer rounded-full p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           >
             <span aria-hidden="true" className="text-lg leading-none">
               &times;

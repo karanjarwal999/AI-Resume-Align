@@ -115,7 +115,7 @@ export default function RegisterPage() {
           className={`inline-flex items-center justify-center rounded-lg px-5 py-3 text-sm font-semibold transition-colors ${
             submitting
               ? "cursor-wait bg-zinc-200 text-zinc-500 dark:bg-zinc-800"
-              : "bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              : "cursor-pointer bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
           }`}
         >
           {submitting ? "Creating account…" : "Create account"}

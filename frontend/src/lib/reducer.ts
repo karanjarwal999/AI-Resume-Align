@@ -1,4 +1,4 @@
-import type { CustomizedResume } from "./types";
+import type { CustomizedResume, SavedResumeMeta } from "./types";
 
 export type Status = "idle" | "customizing" | "success" | "error";
 
@@ -16,6 +16,9 @@ export type PageError = {
 export type PageState = {
   jd: string;
   resumeFile: ResumeFile | null;
+  // Server-persisted resume for authenticated users. Loaded on mount;
+  // null for anonymous users or users who haven't uploaded yet.
+  savedResume: SavedResumeMeta | null;
   status: Status;
   // During streaming, fields fill in one by one — so the type is partial.
   // Non-streaming responses still populate all four fields at once.
@@ -27,6 +30,8 @@ export type Action =
   | { type: "set_jd"; value: string }
   | { type: "set_resume"; file: ResumeFile }
   | { type: "clear_resume" }
+  | { type: "set_saved_resume"; meta: SavedResumeMeta }
+  | { type: "clear_saved_resume" }
   | { type: "customize_start" }
   | { type: "customize_partial"; payload: Partial<CustomizedResume> }
   | { type: "customize_success"; payload: CustomizedResume }
@@ -36,6 +41,7 @@ export type Action =
 export const initialState: PageState = {
   jd: "",
   resumeFile: null,
+  savedResume: null,
   status: "idle",
   result: null,
   error: null,
@@ -49,6 +55,10 @@ export function pageReducer(state: PageState, action: Action): PageState {
       return { ...state, resumeFile: action.file };
     case "clear_resume":
       return { ...state, resumeFile: null };
+    case "set_saved_resume":
+      return { ...state, savedResume: action.meta };
+    case "clear_saved_resume":
+      return { ...state, savedResume: null };
     case "customize_start":
       return { ...state, status: "customizing", result: null, error: null };
     case "customize_partial":

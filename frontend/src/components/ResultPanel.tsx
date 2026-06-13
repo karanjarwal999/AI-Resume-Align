@@ -14,9 +14,11 @@ type Props = {
 
 function isComplete(r: Partial<CustomizedResume>): r is CustomizedResume {
   return (
+    typeof r.name === "string" &&
     typeof r.summary === "string" &&
     Array.isArray(r.skills) &&
     Array.isArray(r.experience) &&
+    Array.isArray(r.education) &&
     Array.isArray(r.suggested_additions)
   );
 }
@@ -32,7 +34,17 @@ export function ResultPanel({ result, isStreaming = false }: Props) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "customized-resume.pdf";
+      // Strip filesystem-unsafe chars before using the LLM-emitted name
+      // as a download filename. Slashes, colons, etc. could otherwise
+      // confuse the browser save dialog (or get silently stripped
+      // depending on the browser).
+      const safeName = result.name
+        .trim()
+        .replace(/[\\/:*?"<>|\x00-\x1f]/g, "")
+        .replace(/\s+/g, "-")
+        .toLowerCase()
+        .slice(0, 60);
+      a.download = safeName ? `${safeName}-resume.pdf` : "customized-resume.pdf";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -71,12 +83,23 @@ export function ResultPanel({ result, isStreaming = false }: Props) {
           className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
             downloadDisabled
               ? "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800"
-              : "border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              : "cursor-pointer border-zinc-300 bg-white text-zinc-900 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           }`}
         >
           {downloading ? "Preparing…" : "Download PDF"}
         </button>
       </div>
+
+      {result.name && (
+        <div className="flex flex-col gap-1 border-b border-zinc-200 pb-4 dark:border-zinc-800">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Name
+          </h3>
+          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            {result.name}
+          </p>
+        </div>
+      )}
 
       {result.summary !== undefined && (
         <div className="flex flex-col gap-2">
@@ -125,6 +148,24 @@ export function ResultPanel({ result, isStreaming = false }: Props) {
         </div>
       )}
 
+      {result.education !== undefined && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Education
+          </h3>
+          <ul className="flex flex-col gap-1 pl-4">
+            {result.education.map((entry, i) => (
+              <li
+                key={i}
+                className="list-disc text-sm leading-relaxed text-zinc-800 dark:text-zinc-200 marker:text-zinc-400"
+              >
+                {entry}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {result.suggested_additions !== undefined && result.suggested_additions.length > 0 && (
         <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
@@ -133,7 +174,7 @@ export function ResultPanel({ result, isStreaming = false }: Props) {
           <p className="text-xs text-amber-700 dark:text-amber-400">
             These appeared in the JD but not in your resume. Consider adding
             them if they apply to you. They&apos;re advisory only and not part
-            of your customized resume.
+            of your downloaded resume.
           </p>
           <ul className="flex flex-col gap-1 pl-4">
             {result.suggested_additions.map((addition, i) => (

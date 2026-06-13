@@ -119,9 +119,17 @@ def get_customization(
     doc = _collection().find_one({"_id": oid, "user_id": user_id})
     if doc is None:
         return None
+    cr = doc.get("customized_resume", {}) or {}
+    # Pre-2026-06-13 records were written before `name` and `education`
+    # joined the schema. Backfill placeholders that satisfy the strict
+    # min_length=1 constraints so HistoryDetail still validates and the
+    # legacy row renders as a clearly-marked stub instead of 500-ing.
+    cr.setdefault("name", "Candidate")
+    if not cr.get("education"):
+        cr["education"] = ["(not recorded in this customization)"]
     return {
         "id": str(doc["_id"]),
         "timestamp": doc["timestamp"],
         "jd_text": doc.get("jd_text", ""),
-        "customized_resume": doc.get("customized_resume", {}),
+        "customized_resume": cr,
     }

@@ -11,10 +11,18 @@ from app.errors import (
     AppError,
     FileTooLargeError,
     InvalidFileTypeError,
+    InvalidInputError,
+    JDTooLongError,
     JDTooShortError,
+    NoSavedResumeError,
 )
 from app.errors import InvalidTokenError
-from app.schemas import CustomizedResume, HistoryDetail, HistoryListItem
+from app.schemas import (
+    CustomizedResume,
+    HistoryDetail,
+    HistoryListItem,
+    SavedResumeMeta,
+)
 from app.services.auth import extract_bearer_token, verify_id_token
 from app.services.history import (
     DEFAULT_HISTORY_LIMIT,
@@ -24,10 +32,12 @@ from app.services.history import (
 )
 from app.services.llm_service import customize_resume, customize_resume_stream
 from app.services.pdf_parser import parse_pdf
+from app.services.saved_resume import get_saved, upsert_saved
 
 from fastapi import HTTPException
 
 MIN_JD_CHARS = 50
+MAX_JD_CHARS = 1500
 MAX_RESUME_BYTES = 5 * 1024 * 1024
 PDF_MAGIC = b"%PDF"
 
@@ -88,7 +98,8 @@ def health() -> dict[str, bool]:
 @app.post("/api/customize/stream")
 async def customize_stream(
     jd: Annotated[str, Form()],
-    resume: Annotated[UploadFile, File()],
+    resume: Annotated[UploadFile | None, File()] = None,
+    use_saved: Annotated[bool, Form()] = False,
     authorization: Annotated[str | None, Header()] = None,
 ) -> StreamingResponse:
     """Phase 2 sibling of /api/customize. Streams partial CustomizedResume
@@ -97,18 +108,26 @@ async def customize_stream(
     standard error envelope BEFORE any streaming begins; failures
     during the stream are emitted as a final {"error": {...}} NDJSON
     line and then the stream closes (AR — Phase 2 coexistence rule).
+
+    Accepts either a `resume` file upload OR `use_saved=true` (authenticated
+    only) to reuse the user's saved-resume text.
     """
     bearer = extract_bearer_token(authorization)
     user_id = verify_id_token(bearer) if bearer else None
 
-    if len(jd.strip()) < MIN_JD_CHARS:
+    jd_len = len(jd.strip())
+    if jd_len < MIN_JD_CHARS:
         raise JDTooShortError(
             f"Job description must be at least {MIN_JD_CHARS} characters."
         )
+    if jd_len > MAX_JD_CHARS:
+        raise JDTooLongError(
+            f"Job description must be {MAX_JD_CHARS:,} characters or fewer."
+        )
 
-    resume_bytes = await resume.read()
-    _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
-    resume_text = parse_pdf(resume_bytes)
+    resume_text, resume_size_bytes = await _resolve_resume_text(
+        resume, use_saved, user_id
+    )
 
     async def ndjson_body():
         start = time.perf_counter()
@@ -148,8 +167,9 @@ async def customize_stream(
                 "duration_ms": int((time.perf_counter() - start) * 1000),
                 "status_code": 200,
                 "jd_length": len(jd),
-                "resume_size_bytes": len(resume_bytes),
+                "resume_size_bytes": resume_size_bytes,
                 "authenticated": user_id is not None,
+                "used_saved_resume": use_saved,
             }
             if error_code is not None:
                 entry["error_code"] = error_code
@@ -160,6 +180,50 @@ async def customize_stream(
     return StreamingResponse(
         ndjson_body(), media_type="application/x-ndjson"
     )
+
+
+@app.get("/api/resume")
+def get_saved_resume(
+    authorization: Annotated[str | None, Header()] = None,
+) -> SavedResumeMeta:
+    """Return metadata for the caller's saved resume.
+
+    404 NO_SAVED_RESUME when the user has never uploaded a resume yet --
+    the frontend treats that as "no chip" and falls back to the upload
+    flow. 401 INVALID_TOKEN for anonymous callers.
+    """
+    user_id = _require_user_id(authorization)
+    saved = get_saved(user_id)
+    if saved is None:
+        raise NoSavedResumeError("No saved resume yet.")
+    return SavedResumeMeta(
+        file_name=saved["file_name"],
+        file_size_bytes=saved["file_size_bytes"],
+        updated_at=saved["updated_at"],
+    )
+
+
+@app.put("/api/resume")
+async def replace_saved_resume(
+    resume: Annotated[UploadFile, File()],
+    authorization: Annotated[str | None, Header()] = None,
+) -> SavedResumeMeta:
+    """Replace the caller's saved resume with a fresh upload.
+
+    Upsert semantics: previous record (if any) is overwritten. The PDF
+    bytes are NOT persisted -- only the parsed text + metadata.
+    """
+    user_id = _require_user_id(authorization)
+    resume_bytes = await resume.read()
+    _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
+    parsed = parse_pdf(resume_bytes)
+    meta = upsert_saved(
+        user_id=user_id,
+        parsed_text=parsed,
+        file_name=resume.filename or "resume.pdf",
+        file_size_bytes=len(resume_bytes),
+    )
+    return SavedResumeMeta(**meta)
 
 
 @app.get("/api/history")
@@ -189,6 +253,45 @@ def history_detail(
     return HistoryDetail(**doc)
 
 
+async def _resolve_resume_text(
+    resume: UploadFile | None,
+    use_saved: bool,
+    user_id: str | None,
+) -> tuple[str, int]:
+    """Return (parsed_resume_text, byte_size_for_log) for a customize call.
+
+    Two branches:
+    - use_saved=True: require auth, no upload, fetch from saved_resumes.
+    - use_saved=False: require upload, validate, parse_pdf as before.
+
+    Raises AppError subclasses for any rejection so callers don't need
+    to inspect return values for failure.
+    """
+    if use_saved:
+        if user_id is None:
+            raise InvalidTokenError("Sign in to use your saved resume.")
+        if resume is not None and (resume.filename or "").strip():
+            raise InvalidInputError(
+                "Send either a resume file or use_saved=true, not both."
+            )
+        saved = get_saved(user_id)
+        if saved is None:
+            raise NoSavedResumeError(
+                "No saved resume yet. Upload one first.",
+                status_code=400,
+            )
+        return saved["parsed_text"], int(saved.get("file_size_bytes", 0))
+
+    if resume is None or not (resume.filename or "").strip():
+        raise InvalidInputError(
+            "A resume file is required when use_saved is false."
+        )
+    resume_bytes = await resume.read()
+    _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
+    parsed = parse_pdf(resume_bytes)
+    return parsed, len(resume_bytes)
+
+
 def _validate_resume_bytes(name: str | None, content_type: str | None, data: bytes) -> None:
     extension_ok = bool(name) and name.lower().endswith(".pdf")
     content_type_ok = content_type == "application/pdf"
@@ -210,7 +313,8 @@ def _validate_resume_bytes(name: str | None, content_type: str | None, data: byt
 @app.post("/api/customize")
 async def customize(
     jd: Annotated[str, Form()],
-    resume: Annotated[UploadFile, File()],
+    resume: Annotated[UploadFile | None, File()] = None,
+    use_saved: Annotated[bool, Form()] = False,
     authorization: Annotated[str | None, Header()] = None,
 ) -> CustomizedResume:
     start = time.perf_counter()
@@ -218,7 +322,7 @@ async def customize(
     error_code: str | None = None
     user_id: str | None = None
     history_write_error: str | None = None
-    resume_bytes = b""
+    resume_size_bytes = 0
     try:
         # Phase 2: if a Bearer token is present, verify it and attach uid
         # to the request for history persistence. Anonymous requests
@@ -227,15 +331,19 @@ async def customize(
         if bearer is not None:
             user_id = verify_id_token(bearer)
 
-        if len(jd.strip()) < MIN_JD_CHARS:
+        jd_len = len(jd.strip())
+        if jd_len < MIN_JD_CHARS:
             raise JDTooShortError(
                 f"Job description must be at least {MIN_JD_CHARS} characters."
             )
+        if jd_len > MAX_JD_CHARS:
+            raise JDTooLongError(
+                f"Job description must be {MAX_JD_CHARS:,} characters or fewer."
+            )
 
-        resume_bytes = await resume.read()
-        _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
-
-        resume_text = parse_pdf(resume_bytes)
+        resume_text, resume_size_bytes = await _resolve_resume_text(
+            resume, use_saved, user_id
+        )
         result = customize_resume(
             jd,
             resume_text,
@@ -273,8 +381,9 @@ async def customize(
             "duration_ms": int((time.perf_counter() - start) * 1000),
             "status_code": status_code,
             "jd_length": len(jd),
-            "resume_size_bytes": len(resume_bytes),
+            "resume_size_bytes": resume_size_bytes,
             "authenticated": user_id is not None,
+            "used_saved_resume": use_saved,
         }
         if error_code is not None:
             entry["error_code"] = error_code

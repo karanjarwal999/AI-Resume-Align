@@ -18,11 +18,16 @@ const styles = StyleSheet.create({
     fontFamily: "Helvetica",
     color: "#1f2937",
   },
-  title: {
-    fontSize: 18,
+  name: {
+    fontSize: 22,
     fontFamily: "Helvetica-Bold",
-    marginBottom: 14,
+    marginBottom: 4,
     color: "#0f172a",
+  },
+  divider: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#e4e4e7",
+    marginBottom: 12,
   },
   sectionHeading: {
     fontSize: 10,
@@ -61,32 +66,6 @@ const styles = StyleSheet.create({
   bulletText: {
     flex: 1,
   },
-  suggestedBox: {
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: "#fcd34d",
-    backgroundColor: "#fffbeb",
-    padding: 10,
-    borderRadius: 4,
-  },
-  suggestedHeading: {
-    fontSize: 10,
-    fontFamily: "Helvetica-Bold",
-    color: "#92400e",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  suggestedNote: {
-    fontSize: 8.5,
-    color: "#a16207",
-    marginBottom: 6,
-  },
-  suggestedItem: {
-    fontSize: 10,
-    color: "#78350f",
-    marginBottom: 2,
-  },
 });
 
 type Props = {
@@ -94,22 +73,15 @@ type Props = {
 };
 
 export function ResumeDocument({ result }: Props) {
+  const displayName = result.name.trim() || "Resume";
   return (
-    <Document title="Customized Resume">
+    <Document title={`${displayName} — Resume`}>
       <Page size="LETTER" style={styles.page}>
-        <Text style={styles.title}>Customized Resume</Text>
+        <Text style={styles.name}>{displayName}</Text>
+        <View style={styles.divider} />
 
         <Text style={styles.sectionHeading}>Summary</Text>
         <Text style={styles.paragraph}>{result.summary}</Text>
-
-        <Text style={styles.sectionHeading}>Skills</Text>
-        <View style={styles.skillsRow}>
-          {result.skills.map((skill, i) => (
-            <Text key={i} style={styles.skillChip}>
-              {skill}
-            </Text>
-          ))}
-        </View>
 
         <Text style={styles.sectionHeading}>Experience</Text>
         {result.experience.map((bullet, i) => (
@@ -119,20 +91,22 @@ export function ResumeDocument({ result }: Props) {
           </View>
         ))}
 
-        {result.suggested_additions.length > 0 && (
-          <View style={styles.suggestedBox}>
-            <Text style={styles.suggestedHeading}>Suggested additions</Text>
-            <Text style={styles.suggestedNote}>
-              These appeared in the JD but not in your resume. Advisory only;
-              not part of the resume body.
-            </Text>
-            {result.suggested_additions.map((addition, i) => (
-              <Text key={i} style={styles.suggestedItem}>
-                • {addition}
-              </Text>
-            ))}
+        <Text style={styles.sectionHeading}>Education</Text>
+        {result.education.map((entry, i) => (
+          <View key={i} style={styles.bulletRow}>
+            <Text style={styles.bullet}>•</Text>
+            <Text style={styles.bulletText}>{entry}</Text>
           </View>
-        )}
+        ))}
+
+        <Text style={styles.sectionHeading}>Skills</Text>
+        <View style={styles.skillsRow}>
+          {result.skills.map((skill, i) => (
+            <Text key={i} style={styles.skillChip}>
+              {skill}
+            </Text>
+          ))}
+        </View>
       </Page>
     </Document>
   );

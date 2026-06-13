@@ -32,7 +32,7 @@ export function AuthHeader() {
         <button
           type="button"
           onClick={() => signOut(auth)}
-          className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           Log out
         </button>

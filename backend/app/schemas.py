@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 SkillItem = Annotated[str, StringConstraints(min_length=1, max_length=60)]
 ExperienceBullet = Annotated[str, StringConstraints(min_length=1, max_length=400)]
+EducationEntry = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 SuggestedAddition = Annotated[str, StringConstraints(min_length=1, max_length=60)]
 
 
@@ -17,13 +18,21 @@ class CustomizedResume(BaseModel):
     client as LLM_INVALID_RESPONSE.
     """
 
+    name: Annotated[str, StringConstraints(min_length=1, max_length=120)]
     summary: Annotated[str, StringConstraints(min_length=200, max_length=600)]
     skills: Annotated[list[SkillItem], Field(min_length=5, max_length=20)]
     experience: Annotated[list[ExperienceBullet], Field(min_length=3, max_length=30)]
+    education: Annotated[list[EducationEntry], Field(min_length=1, max_length=10)]
     suggested_additions: Annotated[list[SuggestedAddition], Field(min_length=0, max_length=10)]
 
 
 from datetime import datetime  # noqa: E402  -- import here to keep CustomizedResume at top
+
+
+class SavedResumeMeta(BaseModel):
+    file_name: str
+    file_size_bytes: int
+    updated_at: datetime
 
 
 class HistoryListItem(BaseModel):
