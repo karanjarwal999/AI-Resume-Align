@@ -26,15 +26,22 @@ function isApiErrorPayload(value: unknown): value is ApiErrorPayload {
 export async function customizeResume(
   jd: string,
   resume: File,
+  idToken?: string,
 ): Promise<CustomizedResume> {
   const body = new FormData();
   body.append("jd", jd);
   body.append("resume", resume);
 
+  const headers: HeadersInit = {};
+  if (idToken) {
+    headers["Authorization"] = `Bearer ${idToken}`;
+  }
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}/api/customize`, {
       method: "POST",
+      headers,
       body,
     });
   } catch {

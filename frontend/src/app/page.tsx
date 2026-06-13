@@ -2,6 +2,7 @@
 
 import { useReducer } from "react";
 
+import { AuthHeader } from "@/components/AuthHeader";
 import { CustomizeButton } from "@/components/CustomizeButton";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { JDInput } from "@/components/JDInput";
@@ -10,6 +11,7 @@ import { ResumeUpload } from "@/components/ResumeUpload";
 import { ApiError, customizeResume } from "@/lib/api";
 import { MIN_JD_CHARS } from "@/lib/constants";
 import { initialState, pageReducer } from "@/lib/reducer";
+import { useAuth } from "@/lib/useAuth";
 
 function disabledReason(jd: string, hasResume: boolean): string | undefined {
   const jdShort = jd.trim().length < MIN_JD_CHARS;
@@ -27,6 +29,7 @@ function disabledReason(jd: string, hasResume: boolean): string | undefined {
 
 export default function Home() {
   const [state, dispatch] = useReducer(pageReducer, initialState);
+  const { user } = useAuth();
 
   const reason = disabledReason(state.jd, state.resumeFile !== null);
   const isDisabled = reason !== undefined;
@@ -36,7 +39,12 @@ export default function Home() {
     if (!state.resumeFile) return;
     dispatch({ type: "customize_start" });
     try {
-      const result = await customizeResume(state.jd, state.resumeFile.file);
+      const idToken = user ? await user.getIdToken() : undefined;
+      const result = await customizeResume(
+        state.jd,
+        state.resumeFile.file,
+        idToken,
+      );
       dispatch({ type: "customize_success", payload: result });
     } catch (err) {
       const error =
@@ -49,13 +57,17 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 sm:text-3xl">
-          AI Resume Align
-        </h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Paste a JD, upload your resume, and we&apos;ll tailor it for the role.
-        </p>
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 sm:text-3xl">
+            AI Resume Align
+          </h1>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Paste a JD, upload your resume, and we&apos;ll tailor it for the
+            role.
+          </p>
+        </div>
+        <AuthHeader />
       </header>
 
       <JDInput
