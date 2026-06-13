@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.errors import (
@@ -22,7 +22,7 @@ from app.services.history import (
     list_customizations,
     save_customization,
 )
-from app.services.llm_service import customize_resume
+from app.services.llm_service import customize_resume, customize_resume_stream
 from app.services.pdf_parser import parse_pdf
 
 from fastapi import HTTPException
@@ -83,6 +83,83 @@ def _require_user_id(authorization: str | None) -> str:
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
+
+
+@app.post("/api/customize/stream")
+async def customize_stream(
+    jd: Annotated[str, Form()],
+    resume: Annotated[UploadFile, File()],
+    authorization: Annotated[str | None, Header()] = None,
+) -> StreamingResponse:
+    """Phase 2 sibling of /api/customize. Streams partial CustomizedResume
+    fields as NDJSON as Gemini's response unfolds. Pre-stream validation
+    (auth, JD length, file type/size, PDF parse) returns 4xx via the
+    standard error envelope BEFORE any streaming begins; failures
+    during the stream are emitted as a final {"error": {...}} NDJSON
+    line and then the stream closes (AR — Phase 2 coexistence rule).
+    """
+    bearer = extract_bearer_token(authorization)
+    user_id = verify_id_token(bearer) if bearer else None
+
+    if len(jd.strip()) < MIN_JD_CHARS:
+        raise JDTooShortError(
+            f"Job description must be at least {MIN_JD_CHARS} characters."
+        )
+
+    resume_bytes = await resume.read()
+    _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
+    resume_text = parse_pdf(resume_bytes)
+
+    async def ndjson_body():
+        start = time.perf_counter()
+        result_payload: dict[str, object] | None = None
+        error_code: str | None = None
+        history_write_error: str | None = None
+        try:
+            for event in customize_resume_stream(
+                jd,
+                resume_text,
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+            ):
+                if "complete" in event:
+                    result_payload = event.get("result")  # type: ignore[assignment]
+                    yield (json.dumps({"complete": True}) + "\n").encode()
+                    continue
+                if "error" in event:
+                    error_code = event["error"]["code"]  # type: ignore[index]
+                yield (json.dumps(event) + "\n").encode()
+
+            if result_payload is not None and user_id is not None:
+                try:
+                    save_customization(
+                        user_id=user_id,
+                        jd_text=jd,
+                        parsed_resume_text=resume_text,
+                        customized_resume=CustomizedResume.model_validate(
+                            result_payload
+                        ),
+                    )
+                except Exception:
+                    history_write_error = "HISTORY_WRITE_FAILED"
+        finally:
+            entry: dict[str, object] = {
+                "event": "customize_stream",
+                "duration_ms": int((time.perf_counter() - start) * 1000),
+                "status_code": 200,
+                "jd_length": len(jd),
+                "resume_size_bytes": len(resume_bytes),
+                "authenticated": user_id is not None,
+            }
+            if error_code is not None:
+                entry["error_code"] = error_code
+            if history_write_error is not None:
+                entry["history_write_error"] = history_write_error
+            print(json.dumps(entry), flush=True)
+
+    return StreamingResponse(
+        ndjson_body(), media_type="application/x-ndjson"
+    )
 
 
 @app.get("/api/history")
