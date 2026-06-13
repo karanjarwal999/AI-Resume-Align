@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 
 import { AuthHeader } from "@/components/AuthHeader";
 import { CustomizeButton } from "@/components/CustomizeButton";
@@ -8,9 +8,10 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { JDInput } from "@/components/JDInput";
 import { ResultPanel } from "@/components/ResultPanel";
 import { ResumeUpload } from "@/components/ResumeUpload";
-import { ApiError, customizeResume } from "@/lib/api";
+import { ApiError, customizeResume, customizeResumeStream } from "@/lib/api";
 import { MIN_JD_CHARS } from "@/lib/constants";
 import { initialState, pageReducer } from "@/lib/reducer";
+import type { CustomizedResume } from "@/lib/types";
 import { useAuth } from "@/lib/useAuth";
 
 function disabledReason(jd: string, hasResume: boolean): string | undefined {
@@ -30,16 +31,17 @@ function disabledReason(jd: string, hasResume: boolean): string | undefined {
 export default function Home() {
   const [state, dispatch] = useReducer(pageReducer, initialState);
   const { user } = useAuth();
+  // Off by default per AR — keep the proven non-streaming path until
+  // streaming has been verified in production.
+  const [useStreaming, setUseStreaming] = useState(false);
 
   const reason = disabledReason(state.jd, state.resumeFile !== null);
   const isDisabled = reason !== undefined;
   const isLoading = state.status === "customizing";
 
-  const handleCustomize = async () => {
+  const runNonStreaming = async (idToken: string | undefined) => {
     if (!state.resumeFile) return;
-    dispatch({ type: "customize_start" });
     try {
-      const idToken = user ? await user.getIdToken() : undefined;
       const result = await customizeResume(
         state.jd,
         state.resumeFile.file,
@@ -52,6 +54,45 @@ export default function Home() {
           ? { code: err.code, message: err.message }
           : { code: "UNKNOWN_ERROR", message: "Something went wrong." };
       dispatch({ type: "customize_error", error });
+    }
+  };
+
+  const runStreaming = async (idToken: string | undefined) => {
+    if (!state.resumeFile) return;
+    let assembled: Partial<CustomizedResume> = {};
+    await customizeResumeStream(
+      state.jd,
+      state.resumeFile.file,
+      idToken,
+      {
+        onPartial: (partial) => {
+          assembled = { ...assembled, ...partial };
+          dispatch({ type: "customize_partial", payload: partial });
+        },
+        onComplete: () => {
+          dispatch({
+            type: "customize_success",
+            payload: assembled as CustomizedResume,
+          });
+        },
+        onError: (err) => {
+          dispatch({
+            type: "customize_error",
+            error: { code: err.code, message: err.message },
+          });
+        },
+      },
+    );
+  };
+
+  const handleCustomize = async () => {
+    if (!state.resumeFile) return;
+    dispatch({ type: "customize_start" });
+    const idToken = user ? await user.getIdToken() : undefined;
+    if (useStreaming) {
+      await runStreaming(idToken);
+    } else {
+      await runNonStreaming(idToken);
     }
   };
 
@@ -81,7 +122,17 @@ export default function Home() {
         onClear={() => dispatch({ type: "clear_resume" })}
       />
 
-      <div className="flex flex-col items-stretch sm:flex-row sm:justify-end">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 sm:mr-auto">
+          <input
+            type="checkbox"
+            checked={useStreaming}
+            onChange={(e) => setUseStreaming(e.target.checked)}
+            disabled={isLoading}
+            className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+          />
+          Stream results as they arrive (experimental)
+        </label>
         <CustomizeButton
           disabled={isDisabled}
           disabledReason={reason}
@@ -94,7 +145,16 @@ export default function Home() {
         <ErrorBanner code={state.error.code} onRetry={handleCustomize} />
       )}
 
-      {state.status === "success" && state.result && (
+      {state.result && state.status !== "error" && state.status === "customizing" && (
+        <ResultPanel result={state.result} isStreaming />
+      )}
+
+      {state.result && state.status === "success" && (
+        <ResultPanel result={state.result} />
+      )}
+
+      {/* Mid-stream error path: keep the partial content visible (AC4 of 2.5). */}
+      {state.result && state.status === "error" && (
         <ResultPanel result={state.result} />
       )}
     </main>
