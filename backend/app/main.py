@@ -289,6 +289,36 @@ async def _resolve_resume_text(
     resume_bytes = await resume.read()
     _validate_resume_bytes(resume.filename, resume.content_type, resume_bytes)
     parsed = parse_pdf(resume_bytes)
+
+    # Auto-populate the saved-resume slot on the FIRST authenticated
+    # fresh upload, so the next visit shows the SavedResumeChip without
+    # requiring the user to click "Replace" first. We deliberately
+    # don't overwrite an existing saved record here: if the user
+    # already curated a saved resume, a one-off upload for this single
+    # customize call shouldn't silently replace it. The chip's Replace
+    # action remains the only way to swap once a saved record exists.
+    # Failure here must not break the customize response — same
+    # swallow-and-log pattern as the history persistence.
+    if user_id is not None:
+        try:
+            if get_saved(user_id) is None:
+                upsert_saved(
+                    user_id=user_id,
+                    parsed_text=parsed,
+                    file_name=resume.filename or "resume.pdf",
+                    file_size_bytes=len(resume_bytes),
+                )
+        except Exception:
+            print(
+                json.dumps(
+                    {
+                        "event": "saved_resume_autosave_failed",
+                        "user_id_present": True,
+                    }
+                ),
+                flush=True,
+            )
+
     return parsed, len(resume_bytes)
 
 
