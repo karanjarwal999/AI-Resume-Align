@@ -4,7 +4,9 @@ import { useReducer } from "react";
 
 import { CustomizeButton } from "@/components/CustomizeButton";
 import { JDInput } from "@/components/JDInput";
+import { ResultPanel } from "@/components/ResultPanel";
 import { ResumeUpload } from "@/components/ResumeUpload";
+import { ApiError, customizeResume } from "@/lib/api";
 import { MIN_JD_CHARS } from "@/lib/constants";
 import { initialState, pageReducer } from "@/lib/reducer";
 
@@ -27,6 +29,22 @@ export default function Home() {
 
   const reason = disabledReason(state.jd, state.resumeFile !== null);
   const isDisabled = reason !== undefined;
+  const isLoading = state.status === "customizing";
+
+  const handleCustomize = async () => {
+    if (!state.resumeFile) return;
+    dispatch({ type: "customize_start" });
+    try {
+      const result = await customizeResume(state.jd, state.resumeFile.file);
+      dispatch({ type: "customize_success", payload: result });
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Something went wrong. Please try again.";
+      dispatch({ type: "customize_error", message });
+    }
+  };
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
@@ -51,8 +69,26 @@ export default function Home() {
       />
 
       <div className="flex flex-col items-stretch sm:flex-row sm:justify-end">
-        <CustomizeButton disabled={isDisabled} disabledReason={reason} />
+        <CustomizeButton
+          disabled={isDisabled}
+          disabledReason={reason}
+          loading={isLoading}
+          onClick={handleCustomize}
+        />
       </div>
+
+      {state.status === "error" && state.error && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+        >
+          {state.error}
+        </div>
+      )}
+
+      {state.status === "success" && state.result && (
+        <ResultPanel result={state.result} />
+      )}
     </main>
   );
 }

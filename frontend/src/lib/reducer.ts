@@ -1,4 +1,6 @@
-export type Status = "idle" | "submitting" | "success" | "error";
+import type { CustomizedResume } from "./types";
+
+export type Status = "idle" | "customizing" | "success" | "error";
 
 export type ResumeFile = {
   file: File;
@@ -10,8 +12,7 @@ export type PageState = {
   jd: string;
   resumeFile: ResumeFile | null;
   status: Status;
-  // result and error are populated by later stories (customize submission).
-  result: unknown | null;
+  result: CustomizedResume | null;
   error: string | null;
 };
 
@@ -20,7 +21,7 @@ export type Action =
   | { type: "set_resume"; file: ResumeFile }
   | { type: "clear_resume" }
   | { type: "customize_start" }
-  | { type: "customize_success"; payload: unknown }
+  | { type: "customize_success"; payload: CustomizedResume }
   | { type: "customize_error"; message: string }
   | { type: "reset" };
 
@@ -41,7 +42,7 @@ export function pageReducer(state: PageState, action: Action): PageState {
     case "clear_resume":
       return { ...state, resumeFile: null };
     case "customize_start":
-      return { ...state, status: "submitting", error: null };
+      return { ...state, status: "customizing", error: null };
     case "customize_success":
       return { ...state, status: "success", result: action.payload, error: null };
     case "customize_error":
