@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     )
 
     allowed_origins: list[str] = ["http://localhost:3000"]
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
