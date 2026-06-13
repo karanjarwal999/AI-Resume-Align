@@ -3,6 +3,7 @@
 import { useReducer } from "react";
 
 import { JDInput } from "@/components/JDInput";
+import { ResumeUpload } from "@/components/ResumeUpload";
 import { initialState, pageReducer } from "@/lib/reducer";
 
 export default function Home() {
@@ -22,6 +23,12 @@ export default function Home() {
       <JDInput
         value={state.jd}
         onChange={(value) => dispatch({ type: "set_jd", value })}
+      />
+
+      <ResumeUpload
+        value={state.resumeFile}
+        onFile={(file) => dispatch({ type: "set_resume", file })}
+        onClear={() => dispatch({ type: "clear_resume" })}
       />
     </main>
   );
