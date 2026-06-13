@@ -9,6 +9,7 @@ class ErrorCode(StrEnum):
     LLM_INVALID_RESPONSE = "LLM_INVALID_RESPONSE"
     LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
     INVALID_INPUT = "INVALID_INPUT"
+    INVALID_TOKEN = "INVALID_TOKEN"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -46,6 +47,11 @@ class InvalidFileTypeError(AppError):
 class FileTooLargeError(AppError):
     status_code = 400
     code = ErrorCode.FILE_TOO_LARGE
+
+
+class InvalidTokenError(AppError):
+    status_code = 401
+    code = ErrorCode.INVALID_TOKEN
 
 
 class LLMError(AppError):

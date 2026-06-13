@@ -14,6 +14,7 @@ from app.errors import (
     JDTooShortError,
 )
 from app.schemas import CustomizedResume
+from app.services.auth import extract_bearer_token, verify_id_token
 from app.services.llm_service import customize_resume
 from app.services.pdf_parser import parse_pdf
 
@@ -86,14 +87,19 @@ async def customize(
     resume: Annotated[UploadFile, File()],
     authorization: Annotated[str | None, Header()] = None,
 ) -> CustomizedResume:
-    # AR13 / AC9 — accept an optional Bearer token but ignore its value in MVP.
-    del authorization
-
     start = time.perf_counter()
     status_code = 200
     error_code: str | None = None
+    user_id: str | None = None
     resume_bytes = b""
     try:
+        # Phase 2: if a Bearer token is present, verify it and attach uid
+        # to the request for history persistence. Anonymous requests
+        # (no header) still proceed exactly as before.
+        bearer = extract_bearer_token(authorization)
+        if bearer is not None:
+            user_id = verify_id_token(bearer)
+
         if len(jd.strip()) < MIN_JD_CHARS:
             raise JDTooShortError(
                 f"Job description must be at least {MIN_JD_CHARS} characters."
@@ -119,12 +125,13 @@ async def customize(
         raise
     finally:
         # AR8 / AC7 — single-line JSON log, no JD or resume content.
-        entry = {
+        entry: dict[str, object] = {
             "event": "customize",
             "duration_ms": int((time.perf_counter() - start) * 1000),
             "status_code": status_code,
             "jd_length": len(jd),
             "resume_size_bytes": len(resume_bytes),
+            "authenticated": user_id is not None,
         }
         if error_code is not None:
             entry["error_code"] = error_code
