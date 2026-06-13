@@ -17,7 +17,9 @@ export type PageState = {
   jd: string;
   resumeFile: ResumeFile | null;
   status: Status;
-  result: CustomizedResume | null;
+  // During streaming, fields fill in one by one — so the type is partial.
+  // Non-streaming responses still populate all four fields at once.
+  result: Partial<CustomizedResume> | null;
   error: PageError | null;
 };
 
@@ -26,6 +28,7 @@ export type Action =
   | { type: "set_resume"; file: ResumeFile }
   | { type: "clear_resume" }
   | { type: "customize_start" }
+  | { type: "customize_partial"; payload: Partial<CustomizedResume> }
   | { type: "customize_success"; payload: CustomizedResume }
   | { type: "customize_error"; error: PageError }
   | { type: "reset" };
@@ -47,7 +50,12 @@ export function pageReducer(state: PageState, action: Action): PageState {
     case "clear_resume":
       return { ...state, resumeFile: null };
     case "customize_start":
-      return { ...state, status: "customizing", error: null };
+      return { ...state, status: "customizing", result: null, error: null };
+    case "customize_partial":
+      return {
+        ...state,
+        result: { ...(state.result ?? {}), ...action.payload },
+      };
     case "customize_success":
       return { ...state, status: "success", result: action.payload, error: null };
     case "customize_error":
