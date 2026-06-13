@@ -12,14 +12,20 @@ independently.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
-from pymongo import MongoClient
+from bson import ObjectId
+from bson.errors import InvalidId
+from pymongo import DESCENDING, MongoClient
 from pymongo.collection import Collection
 
 from app.config import settings
 from app.schemas import CustomizedResume
 
 CUSTOMIZATIONS_COLLECTION = "customizations"
+DEFAULT_HISTORY_LIMIT = 50
+JD_PREVIEW_CHARS = 80
+
 _client: MongoClient | None = None
 
 
@@ -68,3 +74,54 @@ def save_customization(
             "customized_resume": customized_resume.model_dump(),
         }
     )
+
+
+def _build_jd_preview(jd_text: str) -> str:
+    snippet = jd_text[:JD_PREVIEW_CHARS]
+    return f"{snippet}…" if len(jd_text) > JD_PREVIEW_CHARS else snippet
+
+
+def list_customizations(
+    *, user_id: str, limit: int = DEFAULT_HISTORY_LIMIT
+) -> list[dict[str, Any]]:
+    """Return up to `limit` customization previews for `user_id`,
+    newest-first. Never includes another user's rows -- the filter is
+    enforced here, not at the HTTP layer."""
+    cursor = (
+        _collection()
+        .find(
+            {"user_id": user_id},
+            projection={"timestamp": 1, "jd_text": 1},
+        )
+        .sort("timestamp", DESCENDING)
+        .limit(limit)
+    )
+    return [
+        {
+            "id": str(doc["_id"]),
+            "timestamp": doc["timestamp"],
+            "jd_preview": _build_jd_preview(doc.get("jd_text", "")),
+        }
+        for doc in cursor
+    ]
+
+
+def get_customization(
+    *, user_id: str, customization_id: str
+) -> dict[str, Any] | None:
+    """Return the full customization doc if it exists AND belongs to
+    `user_id`. Returns None for unknown id, malformed id, or another
+    user's id -- callers translate None into a 404."""
+    try:
+        oid = ObjectId(customization_id)
+    except (InvalidId, TypeError):
+        return None
+    doc = _collection().find_one({"_id": oid, "user_id": user_id})
+    if doc is None:
+        return None
+    return {
+        "id": str(doc["_id"]),
+        "timestamp": doc["timestamp"],
+        "jd_text": doc.get("jd_text", ""),
+        "customized_resume": doc.get("customized_resume", {}),
+    }

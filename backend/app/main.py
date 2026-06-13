@@ -13,11 +13,19 @@ from app.errors import (
     InvalidFileTypeError,
     JDTooShortError,
 )
-from app.schemas import CustomizedResume
+from app.errors import InvalidTokenError
+from app.schemas import CustomizedResume, HistoryDetail, HistoryListItem
 from app.services.auth import extract_bearer_token, verify_id_token
-from app.services.history import save_customization
+from app.services.history import (
+    DEFAULT_HISTORY_LIMIT,
+    get_customization,
+    list_customizations,
+    save_customization,
+)
 from app.services.llm_service import customize_resume
 from app.services.pdf_parser import parse_pdf
+
+from fastapi import HTTPException
 
 MIN_JD_CHARS = 50
 MAX_RESUME_BYTES = 5 * 1024 * 1024
@@ -59,9 +67,49 @@ async def unhandled_exception_handler(
     )
 
 
+def _require_user_id(authorization: str | None) -> str:
+    """Resolve the verified UID or raise InvalidTokenError.
+
+    Used by endpoints that REQUIRE authentication (the history APIs).
+    The customize endpoint, which still accepts anonymous traffic,
+    uses extract_bearer_token + verify_id_token directly.
+    """
+    token = extract_bearer_token(authorization)
+    if not token:
+        raise InvalidTokenError("Sign in to view your history.")
+    return verify_id_token(token)
+
+
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
+
+
+@app.get("/api/history")
+def history_list(
+    authorization: Annotated[str | None, Header()] = None,
+) -> list[HistoryListItem]:
+    user_id = _require_user_id(authorization)
+    return [
+        HistoryListItem(**item)
+        for item in list_customizations(
+            user_id=user_id, limit=DEFAULT_HISTORY_LIMIT
+        )
+    ]
+
+
+@app.get("/api/history/{customization_id}")
+def history_detail(
+    customization_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+) -> HistoryDetail:
+    user_id = _require_user_id(authorization)
+    doc = get_customization(
+        user_id=user_id, customization_id=customization_id
+    )
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Customization not found.")
+    return HistoryDetail(**doc)
 
 
 def _validate_resume_bytes(name: str | None, content_type: str | None, data: bytes) -> None:

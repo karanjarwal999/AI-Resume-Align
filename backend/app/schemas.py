@@ -21,3 +21,19 @@ class CustomizedResume(BaseModel):
     skills: Annotated[list[SkillItem], Field(min_length=5, max_length=20)]
     experience: Annotated[list[ExperienceBullet], Field(min_length=3, max_length=30)]
     suggested_additions: Annotated[list[SuggestedAddition], Field(min_length=0, max_length=10)]
+
+
+from datetime import datetime  # noqa: E402  -- import here to keep CustomizedResume at top
+
+
+class HistoryListItem(BaseModel):
+    id: str
+    timestamp: datetime
+    jd_preview: str
+
+
+class HistoryDetail(BaseModel):
+    id: str
+    timestamp: datetime
+    jd_text: str
+    customized_resume: CustomizedResume
