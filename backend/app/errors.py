@@ -3,7 +3,11 @@ from enum import StrEnum
 
 class ErrorCode(StrEnum):
     PDF_PARSE_FAILED = "PDF_PARSE_FAILED"
-    LLM_FAILED = "LLM_FAILED"
+    JD_TOO_SHORT = "JD_TOO_SHORT"
+    INVALID_FILE_TYPE = "INVALID_FILE_TYPE"
+    FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    LLM_INVALID_RESPONSE = "LLM_INVALID_RESPONSE"
+    LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
     INVALID_INPUT = "INVALID_INPUT"
 
 
@@ -26,3 +30,32 @@ class AppError(Exception):
 class PDFParseError(AppError):
     status_code = 400
     code = ErrorCode.PDF_PARSE_FAILED
+
+
+class JDTooShortError(AppError):
+    status_code = 400
+    code = ErrorCode.JD_TOO_SHORT
+
+
+class InvalidFileTypeError(AppError):
+    status_code = 400
+    code = ErrorCode.INVALID_FILE_TYPE
+
+
+class FileTooLargeError(AppError):
+    status_code = 400
+    code = ErrorCode.FILE_TOO_LARGE
+
+
+class LLMError(AppError):
+    """Base for Gemini-related failures (502)."""
+
+    status_code = 502
+
+
+class LLMUnavailableError(LLMError):
+    code = ErrorCode.LLM_UNAVAILABLE
+
+
+class LLMInvalidResponseError(LLMError):
+    code = ErrorCode.LLM_INVALID_RESPONSE
