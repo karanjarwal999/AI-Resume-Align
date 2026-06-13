@@ -6,6 +6,19 @@ export type CustomizedResume = {
   suggested_additions: string[];
 };
 
+export type HistoryListItem = {
+  id: string;
+  timestamp: string;  // ISO string
+  jd_preview: string;
+};
+
+export type HistoryDetail = {
+  id: string;
+  timestamp: string;
+  jd_text: string;
+  customized_resume: CustomizedResume;
+};
+
 export type ApiErrorPayload = {
   error: {
     code: string;

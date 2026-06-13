@@ -17,6 +17,12 @@ export function AuthHeader() {
   if (user) {
     return (
       <div className="flex items-center justify-end gap-3 text-sm">
+        <Link
+          href="/history"
+          className="text-zinc-700 hover:underline dark:text-zinc-200"
+        >
+          History
+        </Link>
         <span
           className="max-w-[12rem] truncate text-zinc-600 dark:text-zinc-400"
           title={user.email ?? undefined}

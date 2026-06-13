@@ -1,4 +1,9 @@
-import type { ApiErrorPayload, CustomizedResume } from "./types";
+import type {
+  ApiErrorPayload,
+  CustomizedResume,
+  HistoryDetail,
+  HistoryListItem,
+} from "./types";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -74,4 +79,53 @@ export async function customizeResume(
     `Customize service returned ${response.status} with no error payload.`,
     response.status,
   );
+}
+
+async function authedGet<T>(path: string, idToken: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+  } catch {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
+
+  if (response.ok) {
+    return (await response.json()) as T;
+  }
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // not JSON
+  }
+  if (isApiErrorPayload(payload)) {
+    throw new ApiError(
+      payload.error.code,
+      payload.error.message,
+      response.status,
+    );
+  }
+  throw new ApiError(
+    "UNKNOWN_ERROR",
+    `Server returned ${response.status}.`,
+    response.status,
+  );
+}
+
+export function fetchHistoryList(idToken: string): Promise<HistoryListItem[]> {
+  return authedGet<HistoryListItem[]>("/api/history", idToken);
+}
+
+export function fetchHistoryDetail(
+  idToken: string,
+  id: string,
+): Promise<HistoryDetail> {
+  return authedGet<HistoryDetail>(`/api/history/${id}`, idToken);
 }
